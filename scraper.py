@@ -38,8 +38,7 @@ def search(query: str) -> list[dict]:
         return cached[0]
     resp = session.post(f"{API_BASE}/subject/search", json={"keyword": query, "page": 1, "pageSize": 20}, timeout=15)
     resp.raise_for_status()
-    data = resp.json()
-    items = []
+    return resp.json()  # temp debug
     if isinstance(data, dict):
         for v in data.values():
             if isinstance(v, list):
