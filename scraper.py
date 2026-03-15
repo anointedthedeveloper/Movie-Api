@@ -28,49 +28,19 @@ session.headers.update(API_HEADERS)
 
 # ── Search ────────────────────────────────────────────────────────────────────
 
-_search_cache: dict[str, tuple[list, float]] = {}
+_search_cache: dict[str, tuple[dict, float]] = {}
 _SEARCH_TTL = 300  # 5 minutes
 
-def search(query: str) -> list[dict]:
-    key = query.lower().strip()
+def search(query: str, page: int = 1) -> dict:
+    key = f"{query.lower().strip()}:{page}"
     cached = _search_cache.get(key)
     if cached and time.time() - cached[1] < _SEARCH_TTL:
         return cached[0]
-    resp = session.post(f"{API_BASE}/subject/search", json={"keyword": query, "page": 1, "pageSize": 20}, timeout=15)
+    resp = session.post(f"{API_BASE}/subject/search", json={"keyword": query, "page": page, "pageSize": 24}, timeout=15)
     resp.raise_for_status()
-    return resp.json()  # temp debug
-    if isinstance(data, dict):
-        for v in data.values():
-            if isinstance(v, list):
-                items = v
-                break
-            if isinstance(v, dict):
-                for vv in v.values():
-                    if isinstance(vv, list):
-                        items = vv
-                        break
-    results = []
-    seen = set()
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        dp  = item.get("detailPath", "")
-        sid = item.get("subjectId", "")
-        title = item.get("title", "")
-        if not (dp and sid and title) or dp in seen:
-            continue
-        seen.add(dp)
-        results.append({
-            "title":       title,
-            "date":        item.get("releaseDate", "N/A"),
-            "type":        item.get("subjectType", "N/A"),
-            "genres":      item.get("genres", []),
-            "cover":       item.get("coverUrl") or item.get("coverImage") or (item.get("cover") if isinstance(item.get("cover"), str) else (item.get("cover") or {}).get("url", "")),
-            "detail_path": dp,
-            "subject_id":  str(sid),
-        })
-    _search_cache[key] = (results, time.time())
-    return results
+    result = resp.json().get("data", {})
+    _search_cache[key] = (result, time.time())
+    return result
 
 
 # ── Detail ────────────────────────────────────────────────────────────────────

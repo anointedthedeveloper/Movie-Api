@@ -62,10 +62,11 @@ def get_best_sub(captions: list, lang: str = "en") -> dict | None:
 
 @app.get("/search")
 def api_search():
-    q = request.args.get("q", "").strip()
+    q    = request.args.get("q", "").strip()
+    page = int(request.args.get("page", 1))
     if not q:
         abort(400, "Missing param: q")
-    return jsonify(search(q))
+    return jsonify(search(q, page))
 
 
 # ── Detail ────────────────────────────────────────────────────────────────────
