@@ -66,6 +66,7 @@ def search(query: str) -> list[dict]:
             "date":        item.get("releaseDate", "N/A"),
             "type":        item.get("subjectType", "N/A"),
             "genres":      item.get("genres", []),
+            "cover":       item.get("coverUrl") or item.get("coverImage") or (item.get("cover") if isinstance(item.get("cover"), str) else (item.get("cover") or {}).get("url", "")),
             "detail_path": dp,
             "subject_id":  str(sid),
         })
