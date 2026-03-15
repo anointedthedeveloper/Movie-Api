@@ -36,11 +36,9 @@ def search(query: str) -> list[dict]:
     cached = _search_cache.get(key)
     if cached and time.time() - cached[1] < _SEARCH_TTL:
         return cached[0]
-    resp = session.get(f"{API_BASE}/subject/search", params={"keyword": query, "page": 1, "pageSize": 20}, timeout=15)
+    resp = session.post(f"{API_BASE}/subject/search", json={"keyword": query, "page": 1, "pageSize": 20}, timeout=15)
     resp.raise_for_status()
-    raw = resp.json()
-    # temporary: return raw so we can see the structure
-    return raw
+    data = resp.json()
     items = []
     if isinstance(data, dict):
         for v in data.values():
