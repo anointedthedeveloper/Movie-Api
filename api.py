@@ -218,15 +218,19 @@ def api_stream_season():
     if not subject_id or not detail_path:
         abort(400, "Missing params: subjectId, detailPath")
 
-    # Auto-detect max_ep from detail API
     detail  = get_detail(detail_path)
     season  = next((s for s in detail["seasons"] if s["se"] == se), None)
     if not season:
         abort(404, f"Season {se} not found")
     max_ep  = season["max_ep"]
 
+    ep_from = int(request.args.get("epFrom", 1))
+    ep_to   = int(request.args.get("epTo", max_ep))
+    if ep_from < 1 or ep_to > max_ep or ep_from > ep_to:
+        abort(400, f"Invalid epFrom/epTo range (season has {max_ep} episodes)")
+
     show        = show_name_from_path(detail_path)
-    folder_name = f"Downloaderino_{show}_S{se}_{res}P"
+    folder_name = f"Downloaderino_{show}_S{se}E{ep_from}-E{ep_to}_{res}P"
 
     def episode_chunks(ep_num):
         opts  = get_download_options(subject_id, detail_path, se=se, ep=ep_num)
@@ -263,7 +267,7 @@ def api_stream_season():
             yield from upstream.iter_content(chunk_size=256 * 1024)
 
     zs = zipstream.ZipStream(compress_type=zipstream.ZIP_STORED)
-    for ep_num in range(1, max_ep + 1):
+    for ep_num in range(ep_from, ep_to + 1):
         fname   = f"Downloaderino_{show}_S{se}E{ep_num}_{res}P.mp4"
         arcname = f"{folder_name}/{fname}" if fmt == "folder" else fname
         zs.add(episode_chunks(ep_num), arcname)
