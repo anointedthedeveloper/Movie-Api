@@ -7,7 +7,7 @@ from scraper import search, get_detail, get_download_options, session, DOWNLOAD_
 
 app = Flask(__name__)
 
-FFMPEG = r"C:\ffmpeg\ffmpeg-8.0.1-essentials_build\bin\ffmpeg.exe"
+FFMPEG = "ffmpeg"
 
 
 def show_name_from_path(detail_path: str) -> str:
@@ -281,7 +281,8 @@ def bad_request(e):
 
 @app.errorhandler(500)
 def server_error(e):
-    return jsonify(error=str(e)), 500
+    import traceback
+    return jsonify(error=str(e), traceback=traceback.format_exc()), 500
 
 
 if __name__ == "__main__":
