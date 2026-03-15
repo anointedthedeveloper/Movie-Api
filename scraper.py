@@ -1,9 +1,6 @@
-import queue
 import time
-import threading
 import requests
 from functools import lru_cache
-from playwright.sync_api import sync_playwright
 
 BASE_SITE = "https://downloader2.com"
 API_BASE  = "https://h5-api.aoneroom.com/wefeed-h5api-bff"
@@ -29,91 +26,6 @@ DOWNLOAD_HEADERS = {
 session = requests.Session()
 session.headers.update(API_HEADERS)
 
-# ── Persistent browser worker (runs in its own thread) ───────────────────────
-# Playwright's sync API is greenlet-based and must stay on one thread.
-# We send search jobs via a queue and get results back via per-job Events.
-
-_job_queue: queue.Queue = queue.Queue()
-
-
-def _browser_worker():
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch(
-            headless=True,
-            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
-        )
-        while True:
-            job = _job_queue.get()
-            if job is None:          # shutdown signal
-                break
-            query, result_box, event = job
-            try:
-                page        = browser.new_page()
-                api_event   = threading.Event()
-                intercepted = []
-
-                def handle_response(response):
-                    if "h5-api.aoneroom.com" in response.url and response.status == 200:
-                        try:
-                            intercepted.append(response.json())
-                            api_event.set()
-                        except Exception:
-                            pass
-
-                page.on("response", handle_response)
-                page.goto(f"{BASE_SITE}/?q={query}", wait_until="domcontentloaded", timeout=30000)
-                api_event.wait(timeout=10)
-                page.close()
-
-                results = []
-                for body in intercepted:
-                    items = []
-                    if isinstance(body, dict):
-                        for v in body.values():
-                            if isinstance(v, list):
-                                items = v
-                                break
-                            if isinstance(v, dict):
-                                for vv in v.values():
-                                    if isinstance(vv, list):
-                                        items = vv
-                                        break
-                    for item in items:
-                        if not isinstance(item, dict):
-                            continue
-                        dp  = item.get("detailPath", "")
-                        sid = item.get("subjectId", "")
-                        title = item.get("title", "")
-                        if not (dp and sid and title):
-                            continue
-                        results.append({
-                            "title":       title,
-                            "date":        item.get("releaseDate", "N/A"),
-                            "type":        item.get("subjectType", "N/A"),
-                            "genres":      item.get("genres", []),
-                            "detail_path": dp,
-                            "subject_id":  str(sid),
-                        })
-
-                seen = set()
-                deduped = []
-                for r in results:
-                    if r["detail_path"] not in seen:
-                        seen.add(r["detail_path"])
-                        deduped.append(r)
-
-                result_box.append(deduped)
-            except Exception as e:
-                result_box.append(e)
-            finally:
-                event.set()
-        browser.close()
-
-
-_worker_thread = threading.Thread(target=_browser_worker, daemon=True)
-_worker_thread.start()
-
-
 # ── Search ────────────────────────────────────────────────────────────────────
 
 _search_cache: dict[str, tuple[list, float]] = {}
@@ -124,15 +36,41 @@ def search(query: str) -> list[dict]:
     cached = _search_cache.get(key)
     if cached and time.time() - cached[1] < _SEARCH_TTL:
         return cached[0]
-    result_box: list = []
-    event = threading.Event()
-    _job_queue.put((query, result_box, event))
-    event.wait(timeout=60)
-    result = result_box[0] if result_box else []
-    if isinstance(result, Exception):
-        raise result
-    _search_cache[key] = (result, time.time())
-    return result
+    resp = session.get(f"{API_BASE}/search", params={"keyword": query, "page": 1, "pageSize": 20}, timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+    items = []
+    if isinstance(data, dict):
+        for v in data.values():
+            if isinstance(v, list):
+                items = v
+                break
+            if isinstance(v, dict):
+                for vv in v.values():
+                    if isinstance(vv, list):
+                        items = vv
+                        break
+    results = []
+    seen = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        dp  = item.get("detailPath", "")
+        sid = item.get("subjectId", "")
+        title = item.get("title", "")
+        if not (dp and sid and title) or dp in seen:
+            continue
+        seen.add(dp)
+        results.append({
+            "title":       title,
+            "date":        item.get("releaseDate", "N/A"),
+            "type":        item.get("subjectType", "N/A"),
+            "genres":      item.get("genres", []),
+            "detail_path": dp,
+            "subject_id":  str(sid),
+        })
+    _search_cache[key] = (results, time.time())
+    return results
 
 
 # ── Detail ────────────────────────────────────────────────────────────────────
