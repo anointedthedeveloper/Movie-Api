@@ -4,3 +4,4 @@ lxml
 playwright
 flask
 zipstream-ng
+gunicorn

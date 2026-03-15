@@ -38,7 +38,10 @@ _job_queue: queue.Queue = queue.Queue()
 
 def _browser_worker():
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
+        browser = pw.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+        )
         while True:
             job = _job_queue.get()
             if job is None:          # shutdown signal
