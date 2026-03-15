@@ -147,6 +147,8 @@ def api_stream():
         )
 
     # ── Video ──
+    if not opts["downloads"]:
+        abort(404, "No downloads available for this title")
     res   = int(request.args.get("resolution", opts["downloads"][0]["resolution"]))
     match = next((d for d in opts["downloads"] if d["resolution"] == res), None)
     if not match:
