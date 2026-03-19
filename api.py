@@ -39,6 +39,7 @@ def mux_video_subs(video_url: str, sub_urls: list[dict], out_path: str):
         cmd += ["-c:v", "copy", "-c:a", "copy", "-c:s", "mov_text"]
         for i, s in enumerate(sub_urls):
             cmd += [f"-metadata:s:s:{i}", f"language={s['lang']}"]
+            cmd += [f"-disposition:s:{i}", "default" if i == 0 else "0"]
         cmd += ["-map", "0:v", "-map", "0:a"]
         for i in range(len(sub_tmps)):
             cmd += ["-map", f"{i+1}:0"]
