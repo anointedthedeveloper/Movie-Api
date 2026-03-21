@@ -4,7 +4,7 @@ import tempfile
 import zipstream
 from flask import Flask, jsonify, request, abort, Response, stream_with_context
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from scraper import search, get_detail, get_download_options, session, DOWNLOAD_HEADERS, netnaija_search, netnaija_detail, _nn_session, NN_HEADERS
+from scraper import search, get_featured, get_detail, get_download_options, session, DOWNLOAD_HEADERS, netnaija_search, netnaija_detail, _nn_session, NN_HEADERS
 
 app = Flask(__name__)
 
@@ -60,7 +60,31 @@ def get_best_sub(captions: list, lang: str = "en") -> dict | None:
     )
 
 
-# ── AltSource proxy stream ───────────────────────────────────────────────────
+# ── Netnaija / AltSource in-app download ────────────────────────────────────
+
+def _nn_proxy_stream(target: str):
+    """Shared logic: proxy-stream a Netnaija/AltSource URL with progress headers."""
+    upstream = _nn_session.get(
+        target, stream=True, timeout=120, allow_redirects=True,
+        headers={"User-Agent": NN_HEADERS["User-Agent"], "Referer": "https://thenetnaija.ng/"},
+    )
+    upstream.raise_for_status()
+    content_type   = upstream.headers.get("Content-Type", "application/octet-stream")
+    content_length = upstream.headers.get("Content-Length", "")
+    final_url      = upstream.url
+    filename       = final_url.split("/")[-1].split("?")[0] or "download"
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "X-Download-Source":   "netnaija",
+    }
+    if content_length:
+        headers["Content-Length"] = content_length
+    return Response(
+        stream_with_context(upstream.iter_content(chunk_size=256 * 1024)),
+        mimetype=content_type,
+        headers=headers,
+    )
+
 
 @app.get("/altsource/proxy")
 def api_altsource_proxy():
@@ -71,17 +95,35 @@ def api_altsource_proxy():
     target = request.args.get("url", "").strip()
     if not target or not target.startswith("http"):
         abort(400, "Missing or invalid param: url")
+    return _nn_proxy_stream(target)
+
+
+@app.get("/netnaija/download")
+def api_netnaija_download():
+    """
+    In-app download for a Netnaija direct link.
+    Streams the file through the server so the frontend can track progress.
+    ?url=https://meetdownload.com/...
+    &filename=Gen-V-S01E07.mkv   (optional override)
+    """
+    target   = request.args.get("url", "").strip()
+    override = request.args.get("filename", "").strip()
+    if not target or not target.startswith("http"):
+        abort(400, "Missing or invalid param: url")
     upstream = _nn_session.get(
-        target, stream=True, timeout=60, allow_redirects=True,
+        target, stream=True, timeout=120, allow_redirects=True,
         headers={"User-Agent": NN_HEADERS["User-Agent"], "Referer": "https://thenetnaija.ng/"},
     )
     upstream.raise_for_status()
     content_type   = upstream.headers.get("Content-Type", "application/octet-stream")
     content_length = upstream.headers.get("Content-Length", "")
-    # derive filename from the final (post-redirect) URL
-    final_url = upstream.url
-    filename  = final_url.split("/")[-1].split("?")[0] or "download"
-    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    final_url      = upstream.url
+    filename       = override or final_url.split("/")[-1].split("?")[0] or "download"
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "X-Download-Source":   "netnaija",
+        "Access-Control-Expose-Headers": "Content-Length, Content-Disposition",
+    }
     if content_length:
         headers["Content-Length"] = content_length
     return Response(
@@ -152,6 +194,15 @@ def api_search_all():
                 out["errors"][key] = str(e)
 
     return jsonify(out)
+
+
+# ── Featured / Home ─────────────────────────────────────────────────────────
+
+@app.get("/featured")
+def api_featured():
+    page      = int(request.args.get("page", 1))
+    page_size = int(request.args.get("pageSize", 20))
+    return jsonify(get_featured(page, page_size))
 
 
 # ── Search ────────────────────────────────────────────────────────────────────

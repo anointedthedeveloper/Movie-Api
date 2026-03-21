@@ -27,6 +27,18 @@ DOWNLOAD_HEADERS = {
 session = requests.Session()
 session.headers.update(API_HEADERS)
 
+# ── Featured / Home ─────────────────────────────────────────────────────────
+
+def get_featured(page: int = 1, page_size: int = 20) -> dict:
+    resp = session.post(
+        f"{API_BASE}/subject/everyone",
+        json={"page": page, "pageSize": page_size},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    return resp.json().get("data", {})
+
+
 # ── Search ────────────────────────────────────────────────────────────────────
 
 _search_cache: dict[str, tuple[dict, float]] = {}
@@ -161,10 +173,16 @@ def netnaija_detail(url: str) -> dict:
     content_end   = html.find('class="nav-links"', content_start)
     content_chunk = html[content_start:content_end] if content_start != -1 else html
 
-    # Full description: all <p> text in entry-content, skip empty/link-only paras
-    paras = re.findall(r'<p[^>]*>(.*?)</p>', content_chunk, re.DOTALL)
-    clean = [re.sub(r'<[^>]+>', '', p).strip() for p in paras]
-    description = ' '.join(t for t in clean if len(t) > 10)
+    # Full description: strip all tags from content, split on double-newline/block boundaries
+    # Remove script/style blocks first
+    text_chunk = re.sub(r'<(script|style)[^>]*>.*?</\1>', '', content_chunk, flags=re.DOTALL)
+    # Remove download link anchors (keep their text but skip the actual <a> tags with external hrefs)
+    text_chunk = re.sub(r'<a\s[^>]*href="https?://(?!thenetnaija)[^"]+"[^>]*>.*?</a>', '', text_chunk, flags=re.DOTALL)
+    # Strip remaining tags
+    plain = re.sub(r'<[^>]+>', ' ', text_chunk)
+    # Collapse whitespace, split into sentences, filter noise
+    sentences = [s.strip() for s in re.split(r'[\n\r]{2,}|(?<=\.)\s{2,}', plain) if len(s.strip()) > 20]
+    description = ' '.join(dict.fromkeys(sentences))  # deduplicate while preserving order
     if not description:
         og = re.search(r'<meta property="og:description" content="([^"]+)"', html)
         description = og.group(1) if og else ''
@@ -209,9 +227,9 @@ def netnaija_search(query: str) -> list:
     for block in re.findall(r'class="magsoul-grid-post-inside">(.*?)</div>\s*</div>\s*</div>', html, re.DOTALL):
         url_m   = re.search(r'href="(https://thenetnaija\.ng/[^"]+)"', block)
         title_m = re.search(r'data-grid-post-title="([^"]+)"', block)
-        cover_m = re.search(r'src="(https://[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"', block)
+        cover_m = re.search(r'data-src="(https://[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"', block)
         if not cover_m:
-            cover_m = re.search(r'data-src="(https://[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"', block)
+            cover_m = re.search(r'(?<!data-)src="(https://(?!thenetnaija\.ng/wp-content/plugins)[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"', block)
         if url_m and title_m:
             results.append({
                 "title":  title_m.group(1),
