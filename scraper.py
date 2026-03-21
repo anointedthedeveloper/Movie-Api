@@ -158,15 +158,32 @@ def netnaija_detail(url: str) -> dict:
     cover       = re.search(r'<meta property="og:image" content="([^"]+)"', html)
     description = re.search(r'<meta property="og:description" content="([^"]+)"', html)
 
-    # Extract download links from post content
-    # Find the entry-content section
     content_start = html.find('class="entry-content"')
     content_end   = html.find('class="nav-links"', content_start)
     content_chunk = html[content_start:content_end] if content_start != -1 else html
 
     links = []
-    for m in re.finditer(r'<a\s+href="(https?://[^"]+)"[^>]*target="_blank"[^>]*>\s*<b>([^<]+)</b>', content_chunk):
+    # Pattern 1: <a href="..."><b>LABEL</b></a>
+    for m in re.finditer(r'<a\s[^>]*href="(https?://[^"]+)"[^>]*>\s*<b>([^<]+)</b>', content_chunk):
         links.append({"label": m.group(2).strip(), "url": m.group(1)})
+    # Pattern 2: <b>LABEL</b> ... <a href="...">Download</a>
+    if not links:
+        for m in re.finditer(r'<b>([^<]{2,40})</b>[^<]*(?:<[^>]+>)*[^<]*<a\s[^>]*href="(https?://[^"]+)"', content_chunk):
+            links.append({"label": m.group(1).strip(), "url": m.group(2)})
+    # Pattern 3: any external download link with a text label
+    if not links:
+        for m in re.finditer(r'<a\s[^>]*href="(https?://(?!thenetnaija)[^"]+)"[^>]*>([^<]{2,60})</a>', content_chunk):
+            label = re.sub(r'\s+', ' ', m.group(2)).strip()
+            if label and not label.lower().startswith('<'):
+                links.append({"label": label, "url": m.group(1)})
+
+    # Deduplicate by url
+    seen_urls: set[str] = set()
+    deduped = []
+    for lnk in links:
+        if lnk["url"] not in seen_urls:
+            seen_urls.add(lnk["url"])
+            deduped.append(lnk)
 
     return {
         "title":       title.group(1) if title else "",
@@ -174,10 +191,11 @@ def netnaija_detail(url: str) -> dict:
         "description": description.group(1) if description else "",
         "url":         url,
         "source":      "netnaija",
-        "downloads":   links,
+        "downloads":   deduped,
     }
 
 
+def netnaija_search(query: str) -> list:
     resp = _nn_session.get(f"{NN_BASE}/", params={"s": query}, timeout=15)
     resp.raise_for_status()
     html = resp.text
