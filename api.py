@@ -60,7 +60,37 @@ def get_best_sub(captions: list, lang: str = "en") -> dict | None:
     )
 
 
-# ── Netnaija detail ──────────────────────────────────────────────────────────
+# ── AltSource proxy stream ───────────────────────────────────────────────────
+
+@app.get("/altsource/proxy")
+def api_altsource_proxy():
+    """
+    Proxy-stream any AltSource download URL so the frontend can do
+    in-app downloads with progress.
+    ?url=https://www.lulacloud.com/d/...
+    """
+    target = request.args.get("url", "").strip()
+    if not target or not target.startswith("http"):
+        abort(400, "Missing or invalid param: url")
+    upstream = _nn_session.get(target, stream=True, timeout=60, headers={
+        "User-Agent": NN_HEADERS["User-Agent"],
+        "Referer": "https://thenetnaija.ng/",
+    })
+    upstream.raise_for_status()
+    content_type = upstream.headers.get("Content-Type", "application/octet-stream")
+    content_length = upstream.headers.get("Content-Length", "")
+    filename = target.split("/")[-1].split("?")[0] or "download"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    if content_length:
+        headers["Content-Length"] = content_length
+    return Response(
+        stream_with_context(upstream.iter_content(chunk_size=256 * 1024)),
+        mimetype=content_type,
+        headers=headers,
+    )
+
+
+# ── Netnaija detail ───────────────────────────────────────────────────────────
 
 @app.get("/netnaija/detail")
 def api_netnaija_detail():

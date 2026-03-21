@@ -154,13 +154,22 @@ def netnaija_detail(url: str) -> dict:
     resp.raise_for_status()
     html = resp.text
 
-    title       = re.search(r'<meta property="og:title" content="([^"]+)"', html)
-    cover       = re.search(r'<meta property="og:image" content="([^"]+)"', html)
-    description = re.search(r'<meta property="og:description" content="([^"]+)"', html)
+    title = re.search(r'<meta property="og:title" content="([^"]+)"', html)
+    cover = re.search(r'<meta property="og:image" content="([^"]+)"', html)
 
     content_start = html.find('class="entry-content"')
     content_end   = html.find('class="nav-links"', content_start)
     content_chunk = html[content_start:content_end] if content_start != -1 else html
+
+    # Full description: extract all <p> text before the first download link
+    first_link_pos = content_chunk.find('<a ')
+    pre_links = content_chunk[:first_link_pos] if first_link_pos != -1 else content_chunk
+    paras = re.findall(r'<p[^>]*>([^<]+(?:<(?!/?p)[^>]*>[^<]*)*)</p>', pre_links, re.DOTALL)
+    description = ' '.join(re.sub(r'<[^>]+>', '', p).strip() for p in paras if re.sub(r'<[^>]+>', '', p).strip())
+    if not description:
+        # fallback to og:description
+        og = re.search(r'<meta property="og:description" content="([^"]+)"', html)
+        description = og.group(1) if og else ''
 
     links = []
     # Pattern 1: <a href="..."><b>LABEL</b></a>
@@ -177,7 +186,6 @@ def netnaija_detail(url: str) -> dict:
             if label and not label.lower().startswith('<'):
                 links.append({"label": label, "url": m.group(1)})
 
-    # Deduplicate by url
     seen_urls: set[str] = set()
     deduped = []
     for lnk in links:
@@ -188,7 +196,7 @@ def netnaija_detail(url: str) -> dict:
     return {
         "title":       title.group(1) if title else "",
         "cover":       cover.group(1) if cover else "",
-        "description": description.group(1) if description else "",
+        "description": description,
         "url":         url,
         "source":      "netnaija",
         "downloads":   deduped,
