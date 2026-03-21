@@ -4,7 +4,7 @@ import tempfile
 import zipstream
 from flask import Flask, jsonify, request, abort, Response, stream_with_context
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from scraper import search, get_detail, get_download_options, session, DOWNLOAD_HEADERS, netnaija_search
+from scraper import search, get_detail, get_download_options, session, DOWNLOAD_HEADERS, netnaija_search, netnaija_detail
 
 app = Flask(__name__)
 
@@ -58,6 +58,20 @@ def get_best_sub(captions: list, lang: str = "en") -> dict | None:
         next((c for c in captions if c["lang"] == lang), None)
         or (captions[0] if captions else None)
     )
+
+
+# ── Netnaija detail ──────────────────────────────────────────────────────────
+
+@app.get("/netnaija/detail")
+def api_netnaija_detail():
+    """
+    Scrape detail + download links from a Netnaija post URL.
+    ?url=https://thenetnaija.ng/gen-v-2023-tv-series-download/
+    """
+    url = request.args.get("url", "").strip()
+    if not url or "thenetnaija.ng" not in url:
+        abort(400, "Missing or invalid param: url")
+    return jsonify(netnaija_detail(url))
 
 
 # ── Unified search (all sources) ─────────────────────────────────────────────
