@@ -29,12 +29,11 @@ session.headers.update(API_HEADERS)
 
 # ── Featured / Home ─────────────────────────────────────────────────────────
 
-def get_featured(page: int = 1, page_size: int = 20) -> dict:
-    resp = session.post(
-        f"{API_BASE}/subject/everyone",
-        json={"page": page, "pageSize": page_size},
-        timeout=15,
-    )
+def get_featured(page: int = 1, page_size: int = 18, tab_id: str = "") -> dict:
+    params = {"page": page, "perPage": page_size}
+    if tab_id:
+        params["tabId"] = tab_id
+    resp = session.get(f"{API_BASE}/subject/trending", params=params, timeout=15)
     resp.raise_for_status()
     return resp.json().get("data", {})
 

@@ -201,8 +201,9 @@ def api_search_all():
 @app.get("/featured")
 def api_featured():
     page      = int(request.args.get("page", 1))
-    page_size = int(request.args.get("pageSize", 20))
-    return jsonify(get_featured(page, page_size))
+    page_size = int(request.args.get("pageSize", 18))
+    tab_id    = request.args.get("tabId", "").strip()
+    return jsonify(get_featured(page, page_size, tab_id))
 
 
 # ── Search ────────────────────────────────────────────────────────────────────
