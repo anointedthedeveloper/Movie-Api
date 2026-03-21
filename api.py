@@ -4,7 +4,7 @@ import tempfile
 import zipstream
 from flask import Flask, jsonify, request, abort, Response, stream_with_context
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from scraper import search, get_detail, get_download_options, session, DOWNLOAD_HEADERS, netnaija_search, netnaija_detail
+from scraper import search, get_detail, get_download_options, session, DOWNLOAD_HEADERS, netnaija_search, netnaija_detail, _nn_session, NN_HEADERS
 
 app = Flask(__name__)
 
@@ -65,21 +65,22 @@ def get_best_sub(captions: list, lang: str = "en") -> dict | None:
 @app.get("/altsource/proxy")
 def api_altsource_proxy():
     """
-    Proxy-stream any AltSource download URL so the frontend can do
-    in-app downloads with progress.
+    Proxy-stream any AltSource download URL (follows redirects).
     ?url=https://www.lulacloud.com/d/...
     """
     target = request.args.get("url", "").strip()
     if not target or not target.startswith("http"):
         abort(400, "Missing or invalid param: url")
-    upstream = _nn_session.get(target, stream=True, timeout=60, headers={
-        "User-Agent": NN_HEADERS["User-Agent"],
-        "Referer": "https://thenetnaija.ng/",
-    })
+    upstream = _nn_session.get(
+        target, stream=True, timeout=60, allow_redirects=True,
+        headers={"User-Agent": NN_HEADERS["User-Agent"], "Referer": "https://thenetnaija.ng/"},
+    )
     upstream.raise_for_status()
-    content_type = upstream.headers.get("Content-Type", "application/octet-stream")
+    content_type   = upstream.headers.get("Content-Type", "application/octet-stream")
     content_length = upstream.headers.get("Content-Length", "")
-    filename = target.split("/")[-1].split("?")[0] or "download"
+    # derive filename from the final (post-redirect) URL
+    final_url = upstream.url
+    filename  = final_url.split("/")[-1].split("?")[0] or "download"
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
     if content_length:
         headers["Content-Length"] = content_length

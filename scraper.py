@@ -161,13 +161,11 @@ def netnaija_detail(url: str) -> dict:
     content_end   = html.find('class="nav-links"', content_start)
     content_chunk = html[content_start:content_end] if content_start != -1 else html
 
-    # Full description: extract all <p> text before the first download link
-    first_link_pos = content_chunk.find('<a ')
-    pre_links = content_chunk[:first_link_pos] if first_link_pos != -1 else content_chunk
-    paras = re.findall(r'<p[^>]*>([^<]+(?:<(?!/?p)[^>]*>[^<]*)*)</p>', pre_links, re.DOTALL)
-    description = ' '.join(re.sub(r'<[^>]+>', '', p).strip() for p in paras if re.sub(r'<[^>]+>', '', p).strip())
+    # Full description: all <p> text in entry-content, skip empty/link-only paras
+    paras = re.findall(r'<p[^>]*>(.*?)</p>', content_chunk, re.DOTALL)
+    clean = [re.sub(r'<[^>]+>', '', p).strip() for p in paras]
+    description = ' '.join(t for t in clean if len(t) > 10)
     if not description:
-        # fallback to og:description
         og = re.search(r'<meta property="og:description" content="([^"]+)"', html)
         description = og.group(1) if og else ''
 
