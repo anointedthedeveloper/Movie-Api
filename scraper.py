@@ -1,4 +1,5 @@
 import time
+import re
 import requests
 from functools import lru_cache
 
@@ -131,6 +132,45 @@ def get_download_options(subject_id: str, detail_path: str,
             for c in data.get("captions", [])
         ],
     }
+
+
+# ── Netnaija search ──────────────────────────────────────────────────────────
+
+NN_BASE = "https://thenetnaija.ng"
+NN_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": NN_BASE + "/",
+}
+
+_nn_session = requests.Session()
+_nn_session.headers.update(NN_HEADERS)
+
+
+def netnaija_search(query: str) -> list[dict]:
+    resp = _nn_session.get(f"{NN_BASE}/", params={"s": query}, timeout=15)
+    resp.raise_for_status()
+    html = resp.text
+    results = []
+    for m in re.finditer(
+        r'class="magsoul-grid-post-thumbnail-link"\s+href="([^"]+)"[^>]*title="([^"]+)"'
+        r'.*?data-grid-post-title="([^"]+)"'
+        r'|class="magsoul-grid-post-thumbnail-link"\s+href="([^"]+)"[^>]*title="([^"]+)"',
+        html, re.DOTALL
+    ):
+        url   = m.group(1) or m.group(4)
+        title = m.group(3) or m.group(5) or m.group(2)
+        if url and title:
+            results.append({"title": title, "url": url, "source": "netnaija"})
+    # deduplicate by url
+    seen, out = set(), []
+    for r in results:
+        if r["url"] not in seen:
+            seen.add(r["url"])
+            out.append(r)
+    return out
 
 
 # ── File download ─────────────────────────────────────────────────────────────

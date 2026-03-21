@@ -3,7 +3,8 @@ import subprocess
 import tempfile
 import zipstream
 from flask import Flask, jsonify, request, abort, Response, stream_with_context
-from scraper import search, get_detail, get_download_options, session, DOWNLOAD_HEADERS
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from scraper import search, get_detail, get_download_options, session, DOWNLOAD_HEADERS, netnaija_search
 
 app = Flask(__name__)
 
@@ -57,6 +58,42 @@ def get_best_sub(captions: list, lang: str = "en") -> dict | None:
         next((c for c in captions if c["lang"] == lang), None)
         or (captions[0] if captions else None)
     )
+
+
+# ── Unified search (all sources) ─────────────────────────────────────────────
+
+@app.get("/search/all")
+def api_search_all():
+    """
+    Search all sources concurrently.
+    Returns {primary: [...], netnaija: [...], errors: {}}.
+    Each netnaija result has: title, url, source="netnaija".
+    """
+    q    = request.args.get("q", "").strip()
+    page = int(request.args.get("page", 1))
+    if not q:
+        abort(400, "Missing param: q")
+
+    out = {"primary": [], "netnaija": [], "errors": {}}
+
+    def fetch_primary():
+        data  = search(q, page)
+        items = data if isinstance(data, list) else data.get("list", data.get("items", []))
+        return [{**item, "source": "primary"} for item in (items or [])]
+
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        futures = {
+            ex.submit(fetch_primary):       "primary",
+            ex.submit(netnaija_search, q):  "netnaija",
+        }
+        for fut in as_completed(futures):
+            key = futures[fut]
+            try:
+                out[key] = fut.result()
+            except Exception as e:
+                out["errors"][key] = str(e)
+
+    return jsonify(out)
 
 
 # ── Search ────────────────────────────────────────────────────────────────────
