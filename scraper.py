@@ -153,17 +153,13 @@ def netnaija_search(query: str) -> list[dict]:
     resp = _nn_session.get(f"{NN_BASE}/", params={"s": query}, timeout=15)
     resp.raise_for_status()
     html = resp.text
+    # Extract all grid post blocks then pull href + title from each
     results = []
-    for m in re.finditer(
-        r'class="magsoul-grid-post-thumbnail-link"\s+href="([^"]+)"[^>]*title="([^"]+)"'
-        r'.*?data-grid-post-title="([^"]+)"'
-        r'|class="magsoul-grid-post-thumbnail-link"\s+href="([^"]+)"[^>]*title="([^"]+)"',
-        html, re.DOTALL
-    ):
-        url   = m.group(1) or m.group(4)
-        title = m.group(3) or m.group(5) or m.group(2)
-        if url and title:
-            results.append({"title": title, "url": url, "source": "netnaija"})
+    for block in re.findall(r'class="magsoul-grid-post-inside">(.*?)</div>\s*</div>\s*</div>', html, re.DOTALL):
+        url_m   = re.search(r'href="(https://thenetnaija\.ng/[^"]+)"', block)
+        title_m = re.search(r'data-grid-post-title="([^"]+)"', block)
+        if url_m and title_m:
+            results.append({"title": title_m.group(1), "url": url_m.group(1), "source": "netnaija"})
     # deduplicate by url
     seen, out = set(), []
     for r in results:
