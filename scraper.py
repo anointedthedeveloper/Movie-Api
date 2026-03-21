@@ -153,14 +153,20 @@ def netnaija_search(query: str) -> list[dict]:
     resp = _nn_session.get(f"{NN_BASE}/", params={"s": query}, timeout=15)
     resp.raise_for_status()
     html = resp.text
-    # Extract all grid post blocks then pull href + title from each
     results = []
     for block in re.findall(r'class="magsoul-grid-post-inside">(.*?)</div>\s*</div>\s*</div>', html, re.DOTALL):
         url_m   = re.search(r'href="(https://thenetnaija\.ng/[^"]+)"', block)
         title_m = re.search(r'data-grid-post-title="([^"]+)"', block)
+        cover_m = re.search(r'src="(https://[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"', block)
+        if not cover_m:
+            cover_m = re.search(r'data-src="(https://[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"', block)
         if url_m and title_m:
-            results.append({"title": title_m.group(1), "url": url_m.group(1), "source": "netnaija"})
-    # deduplicate by url
+            results.append({
+                "title":  title_m.group(1),
+                "url":    url_m.group(1),
+                "cover":  cover_m.group(1) if cover_m else "",
+                "source": "netnaija",
+            })
     seen, out = set(), []
     for r in results:
         if r["url"] not in seen:

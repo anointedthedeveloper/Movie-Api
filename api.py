@@ -79,7 +79,20 @@ def api_search_all():
     def fetch_primary():
         data  = search(q, page)
         items = data if isinstance(data, list) else data.get("list", data.get("items", []))
-        return [{**item, "source": "primary"} for item in (items or [])]
+        items = [{**item, "source": "primary"} for item in (items or [])]
+        # Sort: exact title match first, then starts-with, then rest
+        q_lower = q.lower().strip()
+        def sort_key(item):
+            t = item.get("title", "").lower()
+            if t == q_lower:
+                return 0
+            if t.startswith(q_lower):
+                return 1
+            if q_lower in t:
+                return 2
+            return 3
+        items.sort(key=sort_key)
+        return items
 
     with ThreadPoolExecutor(max_workers=2) as ex:
         futures = {
