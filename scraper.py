@@ -18,14 +18,19 @@ API_HEADERS = {
 }
 
 DOWNLOAD_HEADERS = {
-    "User-Agent": API_HEADERS["User-Agent"],
-    "Referer":    BASE_SITE + "/",
-    "Origin":     BASE_SITE,
-    "Accept":     "*/*",
+    "User-Agent":      API_HEADERS["User-Agent"],
+    "Accept":          "video/*,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer":         BASE_SITE + "/",
+    "Cache-Control":   "no-cache",
+    "Pragma":          "no-cache",
 }
 
 session = requests.Session()
 session.headers.update(API_HEADERS)
+
+download_session = requests.Session()
+download_session.headers.update(DOWNLOAD_HEADERS)
 
 # ── Featured / Home ─────────────────────────────────────────────────────────
 

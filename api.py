@@ -4,7 +4,7 @@ import tempfile
 import zipstream
 from flask import Flask, jsonify, request, abort, Response, stream_with_context
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from scraper import search, get_featured, get_detail, get_download_options, session, DOWNLOAD_HEADERS, netnaija_search, netnaija_detail, _nn_session, NN_HEADERS
+from scraper import search, get_featured, get_detail, get_download_options, session, download_session, DOWNLOAD_HEADERS, netnaija_search, netnaija_detail, _nn_session, NN_HEADERS
 
 app = Flask(__name__)
 
@@ -18,7 +18,7 @@ def show_name_from_path(detail_path: str) -> str:
 def fetch_to_temp(url: str, suffix: str) -> str:
     """Download a URL to a temp file, return the file path."""
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-    resp = session.get(url, stream=True, timeout=120, headers=DOWNLOAD_HEADERS)
+    resp = download_session.get(url, stream=True, timeout=120, allow_redirects=True)
     resp.raise_for_status()
     for chunk in resp.iter_content(chunk_size=256 * 1024):
         tmp.write(chunk)
@@ -286,7 +286,7 @@ def api_stream():
         match = next((c for c in opts["captions"] if c["lang"] == lang), None)
         if not match:
             abort(404, f"No caption for lang: {lang}")
-        upstream = session.get(match["url"], stream=True, timeout=60, headers=DOWNLOAD_HEADERS)
+        upstream = download_session.get(match["url"], stream=True, timeout=60, allow_redirects=True)
         upstream.raise_for_status()
         return Response(
             stream_with_context(upstream.iter_content(chunk_size=256 * 1024)),
@@ -341,7 +341,7 @@ def api_stream():
         )
 
     # No subs available or lang=none — plain stream
-    upstream = session.get(match["url"], stream=True, timeout=60, headers=DOWNLOAD_HEADERS)
+    upstream = download_session.get(match["url"], stream=True, timeout=60, allow_redirects=True)
     upstream.raise_for_status()
     return Response(
         stream_with_context(upstream.iter_content(chunk_size=256 * 1024)),
@@ -410,7 +410,7 @@ def api_stream_season():
             finally:
                 os.unlink(out_tmp.name)
         else:
-            upstream = session.get(match["url"], stream=True, timeout=120, headers=DOWNLOAD_HEADERS)
+            upstream = download_session.get(match["url"], stream=True, timeout=120, allow_redirects=True)
             upstream.raise_for_status()
             yield from upstream.iter_content(chunk_size=256 * 1024)
 
