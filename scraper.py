@@ -21,6 +21,7 @@ DOWNLOAD_HEADERS = {
     "User-Agent":      API_HEADERS["User-Agent"],
     "Accept":          "video/*,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
+    "Origin":          BASE_SITE,
     "Referer":         BASE_SITE + "/",
     "Cache-Control":   "no-cache",
     "Pragma":          "no-cache",

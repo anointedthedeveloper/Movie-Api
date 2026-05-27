@@ -18,12 +18,11 @@ def show_name_from_path(detail_path: str) -> str:
 def fetch_to_temp(url: str, suffix: str) -> str:
     """Download a URL to a temp file, return the file path."""
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-    # Debug: log headers being used for external fetches to aid deployments troubleshooting
-    try:
-        print(f"[debug] fetch_to_temp: GET {url} with headers={DOWNLOAD_HEADERS}")
-    except Exception:
-        pass
     resp = download_session.get(url, stream=True, timeout=120, allow_redirects=True, headers=DOWNLOAD_HEADERS)
+    if resp.status_code == 403:
+        # Some CDNs reject requests with Origin; retry without it
+        fallback = {k: v for k, v in DOWNLOAD_HEADERS.items() if k != "Origin"}
+        resp = download_session.get(url, stream=True, timeout=120, allow_redirects=True, headers=fallback)
     resp.raise_for_status()
     for chunk in resp.iter_content(chunk_size=256 * 1024):
         tmp.write(chunk)
