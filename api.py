@@ -18,11 +18,10 @@ def show_name_from_path(detail_path: str) -> str:
 def fetch_to_temp(url: str, suffix: str) -> str:
     """Download a URL to a temp file, return the file path."""
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-    resp = download_session.get(url, stream=True, timeout=120, allow_redirects=True, headers=DOWNLOAD_HEADERS)
-    if resp.status_code == 403:
-        # Some CDNs reject requests with Origin; retry without it
-        fallback = {k: v for k, v in DOWNLOAD_HEADERS.items() if k != "Origin"}
-        resp = download_session.get(url, stream=True, timeout=120, allow_redirects=True, headers=fallback)
+    for headers in [DOWNLOAD_HEADERS, {k: v for k, v in DOWNLOAD_HEADERS.items() if k != "Origin"}, {"User-Agent": DOWNLOAD_HEADERS["User-Agent"]}]:
+        resp = download_session.get(url, stream=True, timeout=120, allow_redirects=True, headers=headers)
+        if resp.status_code != 403:
+            break
     resp.raise_for_status()
     for chunk in resp.iter_content(chunk_size=256 * 1024):
         tmp.write(chunk)
@@ -323,28 +322,35 @@ def api_stream():
     filename = f"Downloaderino_{show}_S{se}E{ep}_{res}P.mp4"
 
     if subs_to_mux:
-        out_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-        out_tmp.close()
-        mux_video_subs(match["url"], subs_to_mux, out_tmp.name)
+        try:
+            out_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+            out_tmp.close()
+            mux_video_subs(match["url"], subs_to_mux, out_tmp.name)
 
-        def stream_and_cleanup(path):
+            def stream_and_cleanup(path):
+                try:
+                    with open(path, "rb") as f:
+                        while chunk := f.read(256 * 1024):
+                            yield chunk
+                finally:
+                    os.unlink(path)
+
+            return Response(
+                stream_with_context(stream_and_cleanup(out_tmp.name)),
+                mimetype="video/mp4",
+                headers={
+                    "Content-Disposition": f'attachment; filename="{filename}"',
+                    "Content-Length": str(os.path.getsize(out_tmp.name)),
+                },
+            )
+        except Exception:
+            # Muxing failed (e.g. CDN blocked fetch) — fall through to plain stream
             try:
-                with open(path, "rb") as f:
-                    while chunk := f.read(256 * 1024):
-                        yield chunk
-            finally:
-                os.unlink(path)
+                os.unlink(out_tmp.name)
+            except Exception:
+                pass
 
-        return Response(
-            stream_with_context(stream_and_cleanup(out_tmp.name)),
-            mimetype="video/mp4",
-            headers={
-                "Content-Disposition": f'attachment; filename="{filename}"',
-                "Content-Length": str(os.path.getsize(out_tmp.name)),
-            },
-        )
-
-    # No subs available or lang=none — plain stream
+    # No subs / lang=none / mux failed — plain proxy stream
     upstream = download_session.get(match["url"], stream=True, timeout=60, allow_redirects=True, headers=DOWNLOAD_HEADERS)
     upstream.raise_for_status()
     return Response(
@@ -430,6 +436,28 @@ def api_stream_season():
         mimetype="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{zip_filename}"'},
     )
+
+
+# ── Debug ────────────────────────────────────────────────────────────────────
+
+@app.get("/debug/url")
+def api_debug_url():
+    """Check what status code a CDN URL returns from this server's IP."""
+    url = request.args.get("url", "").strip()
+    if not url or not url.startswith("http"):
+        abort(400, "Missing or invalid param: url")
+    results = {}
+    for label, hdrs in [
+        ("full", DOWNLOAD_HEADERS),
+        ("no_origin", {k: v for k, v in DOWNLOAD_HEADERS.items() if k != "Origin"}),
+        ("ua_only", {"User-Agent": DOWNLOAD_HEADERS["User-Agent"]}),
+    ]:
+        try:
+            r = download_session.head(url, timeout=15, allow_redirects=True, headers=hdrs)
+            results[label] = {"status": r.status_code, "final_url": r.url}
+        except Exception as e:
+            results[label] = {"error": str(e)}
+    return jsonify(results)
 
 
 # ── Error handlers ────────────────────────────────────────────────────────────
