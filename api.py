@@ -2,7 +2,7 @@ import os
 import subprocess
 import tempfile
 import zipstream
-from flask import Flask, jsonify, request, abort, Response, stream_with_context
+from flask import Flask, jsonify, request, abort, Response, stream_with_context, redirect
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from scraper import search, get_featured, get_detail, get_download_options, session, download_session, DOWNLOAD_HEADERS, netnaija_search, netnaija_detail, _nn_session, NN_HEADERS
 
@@ -319,48 +319,7 @@ def api_stream():
                 if en:
                     subs_to_mux = [{"url": en["url"], "lang": "en"}]
 
-    filename = f"Downloaderino_{show}_S{se}E{ep}_{res}P.mp4"
-
-    if subs_to_mux:
-        try:
-            out_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-            out_tmp.close()
-            mux_video_subs(match["url"], subs_to_mux, out_tmp.name)
-
-            def stream_and_cleanup(path):
-                try:
-                    with open(path, "rb") as f:
-                        while chunk := f.read(256 * 1024):
-                            yield chunk
-                finally:
-                    os.unlink(path)
-
-            return Response(
-                stream_with_context(stream_and_cleanup(out_tmp.name)),
-                mimetype="video/mp4",
-                headers={
-                    "Content-Disposition": f'attachment; filename="{filename}"',
-                    "Content-Length": str(os.path.getsize(out_tmp.name)),
-                },
-            )
-        except Exception:
-            # Muxing failed (e.g. CDN blocked fetch) — fall through to plain stream
-            try:
-                os.unlink(out_tmp.name)
-            except Exception:
-                pass
-
-    # No subs / lang=none / mux failed — plain proxy stream
-    upstream = download_session.get(match["url"], stream=True, timeout=60, allow_redirects=True, headers=DOWNLOAD_HEADERS)
-    upstream.raise_for_status()
-    return Response(
-        stream_with_context(upstream.iter_content(chunk_size=256 * 1024)),
-        mimetype="video/mp4",
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
-            "Content-Length": upstream.headers.get("Content-Length", ""),
-        },
-    )
+    return redirect(match["url"])
 
 
 # ── Season bulk stream ────────────────────────────────────────────────────────
