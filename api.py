@@ -18,7 +18,7 @@ def show_name_from_path(detail_path: str) -> str:
 def fetch_to_temp(url: str, suffix: str) -> str:
     """Download a URL to a temp file, return the file path."""
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-    resp = download_session.get(url, stream=True, timeout=120, allow_redirects=True)
+    resp = download_session.get(url, stream=True, timeout=120, allow_redirects=True, headers=DOWNLOAD_HEADERS)
     resp.raise_for_status()
     for chunk in resp.iter_content(chunk_size=256 * 1024):
         tmp.write(chunk)
@@ -286,7 +286,7 @@ def api_stream():
         match = next((c for c in opts["captions"] if c["lang"] == lang), None)
         if not match:
             abort(404, f"No caption for lang: {lang}")
-        upstream = download_session.get(match["url"], stream=True, timeout=60, allow_redirects=True)
+        upstream = download_session.get(match["url"], stream=True, timeout=60, allow_redirects=True, headers=DOWNLOAD_HEADERS)
         upstream.raise_for_status()
         return Response(
             stream_with_context(upstream.iter_content(chunk_size=256 * 1024)),
@@ -341,7 +341,7 @@ def api_stream():
         )
 
     # No subs available or lang=none — plain stream
-    upstream = download_session.get(match["url"], stream=True, timeout=60, allow_redirects=True)
+    upstream = download_session.get(match["url"], stream=True, timeout=60, allow_redirects=True, headers=DOWNLOAD_HEADERS)
     upstream.raise_for_status()
     return Response(
         stream_with_context(upstream.iter_content(chunk_size=256 * 1024)),
@@ -410,7 +410,7 @@ def api_stream_season():
             finally:
                 os.unlink(out_tmp.name)
         else:
-            upstream = download_session.get(match["url"], stream=True, timeout=120, allow_redirects=True)
+            upstream = download_session.get(match["url"], stream=True, timeout=120, allow_redirects=True, headers=DOWNLOAD_HEADERS)
             upstream.raise_for_status()
             yield from upstream.iter_content(chunk_size=256 * 1024)
 
