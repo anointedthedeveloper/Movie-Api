@@ -1,5 +1,6 @@
 import time
 import re
+import hashlib
 import requests
 from functools import lru_cache
 
@@ -17,6 +18,25 @@ API_HEADERS = {
     "x-client-info":  '{"timezone":"Africa/Lagos"}',
 }
 
+
+def _client_token() -> str:
+    """
+    Replicate the site's X-Client-Token generation:
+      timestamp = floor(now / 1000)
+      reversed  = str(timestamp) reversed
+      signature = MD5(reversed)
+      token     = f"{timestamp},{signature}"
+    """
+    ts = int(time.time())
+    reversed_ts = str(ts)[::-1]
+    sig = hashlib.md5(reversed_ts.encode()).hexdigest()
+    return f"{ts},{sig}"
+
+
+def _api_headers() -> dict:
+    """Return API headers with a fresh X-Client-Token each call."""
+    return {**API_HEADERS, "X-Client-Token": _client_token(), "X-Caller-Source": "node-frontend"}
+
 DOWNLOAD_HEADERS = {
     "User-Agent":      API_HEADERS["User-Agent"],
     "Accept":          "video/*,*/*;q=0.8",
@@ -28,7 +48,7 @@ DOWNLOAD_HEADERS = {
 }
 
 session = requests.Session()
-session.headers.update(API_HEADERS)
+session.headers.update(API_HEADERS)  # base headers; X-Client-Token added per-request
 
 download_session = requests.Session()
 download_session.headers.update(DOWNLOAD_HEADERS)
@@ -39,7 +59,7 @@ def get_featured(page: int = 1, page_size: int = 18, tab_id: str = "") -> dict:
     params = {"page": page, "perPage": page_size}
     if tab_id:
         params["tabId"] = tab_id
-    resp = session.get(f"{API_BASE}/subject/trending", params=params, timeout=15)
+    resp = session.get(f"{API_BASE}/subject/trending", params=params, timeout=15, headers=_api_headers())
     resp.raise_for_status()
     return resp.json().get("data", {})
 
@@ -54,7 +74,7 @@ def search(query: str, page: int = 1) -> dict:
     cached = _search_cache.get(key)
     if cached and time.time() - cached[1] < _SEARCH_TTL:
         return cached[0]
-    resp = session.post(f"{API_BASE}/subject/search", json={"keyword": query, "page": page, "pageSize": 24}, timeout=15)
+    resp = session.post(f"{API_BASE}/subject/search", json={"keyword": query, "page": page, "pageSize": 24}, timeout=15, headers=_api_headers())
     resp.raise_for_status()
     result = resp.json().get("data", {})
     _search_cache[key] = (result, time.time())
@@ -76,7 +96,7 @@ def _extract_cover(subject: dict) -> str:
 @lru_cache(maxsize=256)
 def get_detail(detail_path: str) -> dict:
     resp = session.get(f"{API_BASE}/detail",
-                       params={"detailPath": detail_path}, timeout=15)
+                       params={"detailPath": detail_path}, timeout=15, headers=_api_headers())
     resp.raise_for_status()
     data    = resp.json()["data"]
     subject = data["subject"]
@@ -126,6 +146,7 @@ def get_download_options(subject_id: str, detail_path: str,
         params={"subjectId": subject_id, "detailPath": detail_path,
                 "se": se, "ep": ep},
         timeout=15,
+        headers=_api_headers(),
     )
     resp.raise_for_status()
     data = resp.json()["data"]
