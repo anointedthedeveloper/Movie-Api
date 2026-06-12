@@ -265,9 +265,10 @@ def api_stream():
     if not match:
         abort(404, f"No download for resolution: {res}")
 
+    cdn_headers = {**DOWNLOAD_HEADERS, "Cache-Control": "no-cache", "Pragma": "no-cache"}
     upstream = download_session.get(
         match["url"], stream=True, timeout=60,
-        allow_redirects=True, headers=DOWNLOAD_HEADERS,
+        allow_redirects=True, headers=cdn_headers,
     )
     upstream.raise_for_status()
 
@@ -275,6 +276,7 @@ def api_stream():
     resp_headers = {
         "Content-Disposition": f'attachment; filename="S{se}E{ep}_{res}P.mp4"',
         "Content-Type": "video/mp4",
+        "Cache-Control": "no-store",
         "Access-Control-Expose-Headers": "Content-Length, Content-Disposition",
     }
     if content_length:
