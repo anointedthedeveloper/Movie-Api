@@ -270,6 +270,31 @@ def api_debug_url():
     return jsonify(results)
 
 
+@app.get("/debug/search")
+def api_debug_search():
+    """
+    Raw probe of the upstream search API — returns status, headers, and body
+    so we can diagnose exactly why search is failing.
+    ?q=lucifer
+    """
+    from scraper import API_BASE, session as api_session
+    q = request.args.get("q", "test").strip()
+    try:
+        resp = api_session.post(
+            f"{API_BASE}/subject/search",
+            json={"keyword": q, "page": 1, "pageSize": 5},
+            timeout=15,
+        )
+        return jsonify({
+            "status":   resp.status_code,
+            "body":     resp.json() if resp.headers.get("content-type", "").startswith("application/json") else resp.text[:2000],
+            "headers":  dict(resp.headers),
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+
+
 # ── Error handlers ────────────────────────────────────────────────────────────
 
 @app.errorhandler(400)
