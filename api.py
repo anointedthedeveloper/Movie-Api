@@ -1,5 +1,5 @@
 import os
-from flask import Flask, jsonify, request, abort, Response, stream_with_context, redirect
+from flask import Flask, jsonify, request, abort, Response, stream_with_context
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from scraper import (
     search, get_featured, get_detail, get_download_options,
@@ -201,15 +201,15 @@ def api_links_season():
     ])
 
 
-# ── Single episode stream (redirect to CDN) ───────────────────────────────────
+# ── Single episode stream (proxy through server) ─────────────────────────────
 
 @app.get("/stream")
 def api_stream():
     """
-    Redirects to the CDN video URL for a single episode.
-    &lang=en        → subtitle file only (when type=caption)
-    &type=caption   → return subtitle file
-    &resolution=720 → pick resolution (default: first available)
+    Proxies the video/subtitle through the server so the CDN signed URL
+    is always fetched from the same IP it was generated on.
+    &type=caption&lang=en  → subtitle file only
+    &resolution=720        → pick resolution (default: first available)
     """
     subject_id  = request.args.get("subjectId", "").strip()
     detail_path = request.args.get("detailPath", "").strip()
@@ -238,17 +238,76 @@ def api_stream():
             headers={"Content-Disposition": f'attachment; filename="sub_S{se}E{ep}_{lang}.srt"'},
         )
 
-    # Video — just redirect to CDN
+    # Video — proxy through server so CDN IP check passes
     if not opts["downloads"]:
         abort(404, "No downloads available for this title")
     res   = int(request.args.get("resolution", opts["downloads"][0]["resolution"]))
     match = next((d for d in opts["downloads"] if d["resolution"] == res), None)
     if not match:
         abort(404, f"No download for resolution: {res}")
-    return redirect(match["url"])
+
+    upstream = download_session.get(
+        match["url"], stream=True, timeout=60,
+        allow_redirects=True, headers=DOWNLOAD_HEADERS,
+    )
+    upstream.raise_for_status()
+
+    content_length = upstream.headers.get("Content-Length", "")
+    resp_headers = {
+        "Content-Disposition": f'attachment; filename="S{se}E{ep}_{res}P.mp4"',
+        "Content-Type": "video/mp4",
+        "Access-Control-Expose-Headers": "Content-Length, Content-Disposition",
+    }
+    if content_length:
+        resp_headers["Content-Length"] = content_length
+
+    return Response(
+        stream_with_context(upstream.iter_content(chunk_size=256 * 1024)),
+        mimetype="video/mp4",
+        headers=resp_headers,
+    )
 
 
-# ── Debug ─────────────────────────────────────────────────────────────────────
+# ── Generic CDN proxy ────────────────────────────────────────────────────────
+
+@app.get("/proxy")
+def api_proxy():
+    """
+    Proxy any CDN video/subtitle URL through the server.
+    Solves IP-locked signed URL rejections when the browser hits CDN directly.
+    ?url=https://bcdnxw.hakunaymatata.com/...
+    &filename=episode.mp4  (optional)
+    """
+    target   = request.args.get("url", "").strip()
+    filename = request.args.get("filename", "").strip()
+    if not target or not target.startswith("http"):
+        abort(400, "Missing or invalid param: url")
+
+    upstream = download_session.get(
+        target, stream=True, timeout=60,
+        allow_redirects=True, headers=DOWNLOAD_HEADERS,
+    )
+    upstream.raise_for_status()
+
+    content_type   = upstream.headers.get("Content-Type", "application/octet-stream")
+    content_length = upstream.headers.get("Content-Length", "")
+    final_filename = filename or target.split("/")[-1].split("?")[0] or "download"
+
+    resp_headers = {
+        "Content-Disposition": f'attachment; filename="{final_filename}"',
+        "Access-Control-Expose-Headers": "Content-Length, Content-Disposition",
+    }
+    if content_length:
+        resp_headers["Content-Length"] = content_length
+
+    return Response(
+        stream_with_context(upstream.iter_content(chunk_size=256 * 1024)),
+        mimetype=content_type,
+        headers=resp_headers,
+    )
+
+
+
 
 @app.get("/debug/url")
 def api_debug_url():
