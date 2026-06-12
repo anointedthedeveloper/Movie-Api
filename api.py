@@ -183,22 +183,18 @@ def api_links():
         abort(400, "Missing params: subjectId, detailPath")
     opts = get_download_options(subject_id, detail_path, se=se, ep=ep)
 
-    # Wrap every CDN URL through /stream so it's fetched server-side
-    # (CDN signed URLs are IP-locked — browser direct access returns 403)
-    base_url = request.host_url.rstrip("/")
+    # Tell the frontend which headers it needs to pass when fetching CDN URLs
+    # (CDN blocks datacenter IPs like Vercel/AWS but allows browser requests
+    #  with the correct Origin/Referer)
+    cdn_headers = {
+        "Origin":  "https://downloader2.com",
+        "Referer": "https://downloader2.com/",
+    }
     for d in opts["downloads"]:
-        d["proxy_url"] = (
-            f"{base_url}/stream?subjectId={subject_id}"
-            f"&detailPath={detail_path}&se={se}&ep={ep}"
-            f"&resolution={d['resolution']}"
-        )
+        d["headers"] = cdn_headers
     for c in opts["captions"]:
-        from urllib.parse import quote
-        c["proxy_url"] = (
-            f"{base_url}/stream?subjectId={subject_id}"
-            f"&detailPath={detail_path}&se={se}&ep={ep}"
-            f"&type=caption&lang={c['lang']}"
-        )
+        c["headers"] = cdn_headers
+
     return jsonify(opts)
 
 
