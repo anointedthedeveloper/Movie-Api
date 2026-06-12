@@ -1,6 +1,4 @@
-requests
-beautifulsoup4
-lxml
-flask
-zipstream-ng
-gunicorn
+requests==2.32.3
+beautifulsoup4==4.12.3
+lxml==5.3.0
+flask==3.1.0

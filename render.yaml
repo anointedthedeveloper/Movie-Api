@@ -1,6 +1,0 @@
-services:
-  - type: web
-    name: downloaderinoapi
-    runtime: docker
-    plan: free
-    healthCheckPath: /featured

@@ -1,72 +1,19 @@
 import os
-import subprocess
-import tempfile
-import zipstream
 from flask import Flask, jsonify, request, abort, Response, stream_with_context, redirect
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from scraper import search, get_featured, get_detail, get_download_options, session, download_session, DOWNLOAD_HEADERS, netnaija_search, netnaija_detail, _nn_session, NN_HEADERS
+from scraper import (
+    search, get_featured, get_detail, get_download_options,
+    download_session, DOWNLOAD_HEADERS,
+    netnaija_search, netnaija_detail, _nn_session, NN_HEADERS,
+)
 
 app = Flask(__name__)
 
-FFMPEG = "ffmpeg"
 
-
-def show_name_from_path(detail_path: str) -> str:
-    return "-".join(detail_path.split("-")[:-1]).replace("-", " ").title()
-
-
-def fetch_to_temp(url: str, suffix: str) -> str:
-    """Download a URL to a temp file, return the file path."""
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-    for headers in [DOWNLOAD_HEADERS, {k: v for k, v in DOWNLOAD_HEADERS.items() if k != "Origin"}, {"User-Agent": DOWNLOAD_HEADERS["User-Agent"]}]:
-        resp = download_session.get(url, stream=True, timeout=120, allow_redirects=True, headers=headers)
-        if resp.status_code != 403:
-            break
-    resp.raise_for_status()
-    for chunk in resp.iter_content(chunk_size=256 * 1024):
-        tmp.write(chunk)
-    tmp.close()
-    return tmp.name
-
-
-def mux_video_subs(video_url: str, sub_urls: list[dict], out_path: str):
-    """
-    Mux video + one or more subtitles into MP4.
-    sub_urls: list of {url, lang} dicts.
-    """
-    vid_tmp  = fetch_to_temp(video_url, ".mp4")
-    sub_tmps = [fetch_to_temp(s["url"], ".srt") for s in sub_urls]
-    try:
-        cmd = [FFMPEG, "-y", "-i", vid_tmp]
-        for st in sub_tmps:
-            cmd += ["-i", st]
-        cmd += ["-c:v", "copy", "-c:a", "copy", "-c:s", "mov_text"]
-        for i, s in enumerate(sub_urls):
-            cmd += [f"-metadata:s:s:{i}", f"language={s['lang']}"]
-            cmd += [f"-disposition:s:{i}", "default" if i == 0 else "0"]
-        cmd += ["-map", "0:v", "-map", "0:a"]
-        for i in range(len(sub_tmps)):
-            cmd += ["-map", f"{i+1}:0"]
-        cmd.append(out_path)
-        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    finally:
-        os.unlink(vid_tmp)
-        for st in sub_tmps:
-            os.unlink(st)
-
-
-def get_best_sub(captions: list, lang: str = "en") -> dict | None:
-    """Pick requested lang, fall back to first available."""
-    return (
-        next((c for c in captions if c["lang"] == lang), None)
-        or (captions[0] if captions else None)
-    )
-
-
-# ── Netnaija / AltSource in-app download ────────────────────────────────────
+# ── Netnaija / AltSource proxy ───────────────────────────────────────────────
 
 def _nn_proxy_stream(target: str):
-    """Shared logic: proxy-stream a Netnaija/AltSource URL with progress headers."""
+    """Proxy-stream a Netnaija/AltSource URL."""
     upstream = _nn_session.get(
         target, stream=True, timeout=120, allow_redirects=True,
         headers={"User-Agent": NN_HEADERS["User-Agent"], "Referer": "https://thenetnaija.ng/"},
@@ -92,7 +39,7 @@ def _nn_proxy_stream(target: str):
 @app.get("/altsource/proxy")
 def api_altsource_proxy():
     """
-    Proxy-stream any AltSource download URL (follows redirects).
+    Proxy-stream any AltSource download URL.
     ?url=https://www.lulacloud.com/d/...
     """
     target = request.args.get("url", "").strip()
@@ -105,7 +52,6 @@ def api_altsource_proxy():
 def api_netnaija_download():
     """
     In-app download for a Netnaija direct link.
-    Streams the file through the server so the frontend can track progress.
     ?url=https://meetdownload.com/...
     &filename=Gen-V-S01E07.mkv   (optional override)
     """
@@ -157,7 +103,6 @@ def api_search_all():
     """
     Search all sources concurrently.
     Returns {primary: [...], netnaija: [...], errors: {}}.
-    Each netnaija result has: title, url, source="netnaija".
     """
     q    = request.args.get("q", "").strip()
     page = int(request.args.get("page", 1))
@@ -170,24 +115,20 @@ def api_search_all():
         data  = search(q, page)
         items = data if isinstance(data, list) else data.get("list", data.get("items", []))
         items = [{**item, "source": "primary"} for item in (items or [])]
-        # Sort: exact title match first, then starts-with, then rest
         q_lower = q.lower().strip()
         def sort_key(item):
             t = item.get("title", "").lower()
-            if t == q_lower:
-                return 0
-            if t.startswith(q_lower):
-                return 1
-            if q_lower in t:
-                return 2
+            if t == q_lower:        return 0
+            if t.startswith(q_lower): return 1
+            if q_lower in t:         return 2
             return 3
         items.sort(key=sort_key)
         return items
 
     with ThreadPoolExecutor(max_workers=2) as ex:
         futures = {
-            ex.submit(fetch_primary):       "primary",
-            ex.submit(netnaija_search, q):  "netnaija",
+            ex.submit(fetch_primary):      "primary",
+            ex.submit(netnaija_search, q): "netnaija",
         }
         for fut in as_completed(futures):
             key = futures[fut]
@@ -199,7 +140,7 @@ def api_search_all():
     return jsonify(out)
 
 
-# ── Featured / Home ─────────────────────────────────────────────────────────
+# ── Featured / Home ──────────────────────────────────────────────────────────
 
 @app.get("/featured")
 def api_featured():
@@ -260,17 +201,15 @@ def api_links_season():
     ])
 
 
-# ── Single episode stream ─────────────────────────────────────────────────────
+# ── Single episode stream (redirect to CDN) ───────────────────────────────────
 
 @app.get("/stream")
 def api_stream():
     """
-    Stream a single episode with subtitles muxed in by default.
-    &lang=en        → English only (default)
-    &lang=all       → all available subtitle languages as tracks
-    &lang=fr,es     → specific languages
-    &lang=none      → no subtitles
-    &type=caption&lang=en → subtitle file only
+    Redirects to the CDN video URL for a single episode.
+    &lang=en        → subtitle file only (when type=caption)
+    &type=caption   → return subtitle file
+    &resolution=720 → pick resolution (default: first available)
     """
     subject_id  = request.args.get("subjectId", "").strip()
     detail_path = request.args.get("detailPath", "").strip()
@@ -280,124 +219,36 @@ def api_stream():
     if not subject_id or not detail_path:
         abort(400, "Missing params: subjectId, detailPath")
 
-    opts  = get_download_options(subject_id, detail_path, se=se, ep=ep)
-    show  = show_name_from_path(detail_path)
-    kind  = request.args.get("type", "video")
+    opts = get_download_options(subject_id, detail_path, se=se, ep=ep)
+    kind = request.args.get("type", "video")
 
-    # ── Subtitle file only ──
+    # Subtitle file only
     if kind == "caption":
         match = next((c for c in opts["captions"] if c["lang"] == lang), None)
         if not match:
             abort(404, f"No caption for lang: {lang}")
-        upstream = download_session.get(match["url"], stream=True, timeout=60, allow_redirects=True, headers=DOWNLOAD_HEADERS)
+        upstream = download_session.get(
+            match["url"], stream=True, timeout=60,
+            allow_redirects=True, headers=DOWNLOAD_HEADERS,
+        )
         upstream.raise_for_status()
         return Response(
             stream_with_context(upstream.iter_content(chunk_size=256 * 1024)),
             mimetype="text/plain",
-            headers={"Content-Disposition": f'attachment; filename="Downloaderino_{show}_S{se}E{ep}_{lang}.srt"'},
+            headers={"Content-Disposition": f'attachment; filename="sub_S{se}E{ep}_{lang}.srt"'},
         )
 
-    # ── Video ──
+    # Video — just redirect to CDN
     if not opts["downloads"]:
         abort(404, "No downloads available for this title")
     res   = int(request.args.get("resolution", opts["downloads"][0]["resolution"]))
     match = next((d for d in opts["downloads"] if d["resolution"] == res), None)
     if not match:
         abort(404, f"No download for resolution: {res}")
-
-    # Resolve which subtitle tracks to embed
-    subs_to_mux = []
-    if opts["captions"] and lang != "none":
-        if lang == "all":
-            subs_to_mux = [{"url": c["url"], "lang": c["lang"]} for c in opts["captions"]]
-        else:
-            langs = [l.strip() for l in lang.split(",")]
-            subs_to_mux = [{"url": c["url"], "lang": c["lang"]} for c in opts["captions"] if c["lang"] in langs]
-            # fallback to english if none matched
-            if not subs_to_mux:
-                en = next((c for c in opts["captions"] if c["lang"] == "en"), None)
-                if en:
-                    subs_to_mux = [{"url": en["url"], "lang": "en"}]
-
     return redirect(match["url"])
 
 
-# ── Season bulk stream ────────────────────────────────────────────────────────
-
-@app.get("/stream/season")
-def api_stream_season():
-    subject_id  = request.args.get("subjectId", "").strip()
-    detail_path = request.args.get("detailPath", "").strip()
-    se          = int(request.args.get("se", 1))
-    res         = int(request.args.get("resolution", 360))
-    fmt         = request.args.get("format", "folder")
-    lang        = request.args.get("lang", "en")
-    if not subject_id or not detail_path:
-        abort(400, "Missing params: subjectId, detailPath")
-
-    detail  = get_detail(detail_path)
-    season  = next((s for s in detail["seasons"] if s["se"] == se), None)
-    if not season:
-        abort(404, f"Season {se} not found")
-    max_ep  = season["max_ep"]
-
-    ep_from = int(request.args.get("epFrom", 1))
-    ep_to   = int(request.args.get("epTo", max_ep))
-    if ep_from < 1 or ep_to > max_ep or ep_from > ep_to:
-        abort(400, f"Invalid epFrom/epTo range (season has {max_ep} episodes)")
-
-    show        = show_name_from_path(detail_path)
-    folder_name = f"Downloaderino_{show}_S{se}E{ep_from}-E{ep_to}_{res}P"
-
-    def episode_chunks(ep_num):
-        opts  = get_download_options(subject_id, detail_path, se=se, ep=ep_num)
-        match = next((d for d in opts["downloads"] if d["resolution"] == res),
-                     opts["downloads"][0] if opts["downloads"] else None)
-        if not match:
-            return
-
-        subs_to_mux = []
-        if opts["captions"] and lang != "none":
-            if lang == "all":
-                subs_to_mux = [{"url": c["url"], "lang": c["lang"]} for c in opts["captions"]]
-            else:
-                langs = [l.strip() for l in lang.split(",")]
-                subs_to_mux = [{"url": c["url"], "lang": c["lang"]} for c in opts["captions"] if c["lang"] in langs]
-                if not subs_to_mux:
-                    en = next((c for c in opts["captions"] if c["lang"] == "en"), None)
-                    if en:
-                        subs_to_mux = [{"url": en["url"], "lang": "en"}]
-
-        if subs_to_mux:
-            out_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-            out_tmp.close()
-            mux_video_subs(match["url"], subs_to_mux, out_tmp.name)
-            try:
-                with open(out_tmp.name, "rb") as f:
-                    while chunk := f.read(256 * 1024):
-                        yield chunk
-            finally:
-                os.unlink(out_tmp.name)
-        else:
-            upstream = download_session.get(match["url"], stream=True, timeout=120, allow_redirects=True, headers=DOWNLOAD_HEADERS)
-            upstream.raise_for_status()
-            yield from upstream.iter_content(chunk_size=256 * 1024)
-
-    zs = zipstream.ZipStream(compress_type=zipstream.ZIP_STORED)
-    for ep_num in range(ep_from, ep_to + 1):
-        fname   = f"Downloaderino_{show}_S{se}E{ep_num}_{res}P.mp4"
-        arcname = f"{folder_name}/{fname}" if fmt == "folder" else fname
-        zs.add(episode_chunks(ep_num), arcname)
-
-    zip_filename = f"{folder_name}.zip"
-    return Response(
-        stream_with_context(zs),
-        mimetype="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{zip_filename}"'},
-    )
-
-
-# ── Debug ────────────────────────────────────────────────────────────────────
+# ── Debug ─────────────────────────────────────────────────────────────────────
 
 @app.get("/debug/url")
 def api_debug_url():
@@ -407,9 +258,9 @@ def api_debug_url():
         abort(400, "Missing or invalid param: url")
     results = {}
     for label, hdrs in [
-        ("full", DOWNLOAD_HEADERS),
+        ("full",      DOWNLOAD_HEADERS),
         ("no_origin", {k: v for k, v in DOWNLOAD_HEADERS.items() if k != "Origin"}),
-        ("ua_only", {"User-Agent": DOWNLOAD_HEADERS["User-Agent"]}),
+        ("ua_only",   {"User-Agent": DOWNLOAD_HEADERS["User-Agent"]}),
     ]:
         try:
             r = download_session.head(url, timeout=15, allow_redirects=True, headers=hdrs)
@@ -425,11 +276,11 @@ def api_debug_url():
 def bad_request(e):
     return jsonify(error=str(e)), 400
 
+@app.errorhandler(404)
+def not_found(e):
+    return jsonify(error=str(e)), 404
+
 @app.errorhandler(500)
 def server_error(e):
     import traceback
     return jsonify(error=str(e), traceback=traceback.format_exc()), 500
-
-
-if __name__ == "__main__":
-    app.run(debug=True, port=5000, use_reloader=False, threaded=True)
