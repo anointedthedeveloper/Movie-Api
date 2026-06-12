@@ -181,7 +181,25 @@ def api_links():
     ep          = int(request.args.get("ep", 1))
     if not subject_id or not detail_path:
         abort(400, "Missing params: subjectId, detailPath")
-    return jsonify(get_download_options(subject_id, detail_path, se=se, ep=ep))
+    opts = get_download_options(subject_id, detail_path, se=se, ep=ep)
+
+    # Wrap every CDN URL through /stream so it's fetched server-side
+    # (CDN signed URLs are IP-locked — browser direct access returns 403)
+    base_url = request.host_url.rstrip("/")
+    for d in opts["downloads"]:
+        d["proxy_url"] = (
+            f"{base_url}/stream?subjectId={subject_id}"
+            f"&detailPath={detail_path}&se={se}&ep={ep}"
+            f"&resolution={d['resolution']}"
+        )
+    for c in opts["captions"]:
+        from urllib.parse import quote
+        c["proxy_url"] = (
+            f"{base_url}/stream?subjectId={subject_id}"
+            f"&detailPath={detail_path}&se={se}&ep={ep}"
+            f"&type=caption&lang={c['lang']}"
+        )
+    return jsonify(opts)
 
 
 @app.get("/links/season")
@@ -201,13 +219,13 @@ def api_links_season():
     ])
 
 
-# ── Single episode stream (proxy through server) ─────────────────────────────
+# ── Single episode stream (fetches fresh URL + proxies server-side) ──────────
 
 @app.get("/stream")
 def api_stream():
     """
-    Proxies the video/subtitle through the server so the CDN signed URL
-    is always fetched from the same IP it was generated on.
+    Fetches a fresh CDN URL and proxies the bytes through the server.
+    Fresh URL = fresh signature = same IP that signed it does the fetch.
     &type=caption&lang=en  → subtitle file only
     &resolution=720        → pick resolution (default: first available)
     """
@@ -219,6 +237,7 @@ def api_stream():
     if not subject_id or not detail_path:
         abort(400, "Missing params: subjectId, detailPath")
 
+    # Always fetch fresh options so the signed URL is brand new
     opts = get_download_options(subject_id, detail_path, se=se, ep=ep)
     kind = request.args.get("type", "video")
 
@@ -238,7 +257,7 @@ def api_stream():
             headers={"Content-Disposition": f'attachment; filename="sub_S{se}E{ep}_{lang}.srt"'},
         )
 
-    # Video — proxy through server so CDN IP check passes
+    # Video — fetch fresh URL and proxy immediately (same function = same IP)
     if not opts["downloads"]:
         abort(404, "No downloads available for this title")
     res   = int(request.args.get("resolution", opts["downloads"][0]["resolution"]))
