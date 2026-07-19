@@ -215,6 +215,50 @@ def api_links_season():
     ])
 
 
+# ── Bulk season download links ───────────────────────────────────────────────
+
+@app.get("/stream/season")
+def api_stream_season():
+    """
+    Returns all episode stream URLs for a season (no proxying — client downloads directly).
+    ?subjectId=...&detailPath=...&se=1&resolution=720
+    """
+    subject_id  = request.args.get("subjectId", "").strip()
+    detail_path = request.args.get("detailPath", "").strip()
+    se          = int(request.args.get("se", 1))
+    resolution  = request.args.get("resolution", "").strip()
+    if not subject_id or not detail_path:
+        abort(400, "Missing params: subjectId, detailPath")
+
+    detail = get_detail(detail_path)
+    season = next((s for s in detail["seasons"] if s["se"] == se), None)
+    if not season:
+        abort(404, f"Season {se} not found")
+
+    cdn_headers = {
+        "Origin":  "https://downloader2.com",
+        "Referer": "https://downloader2.com/",
+    }
+
+    episodes = []
+    for ep_num in range(1, season["max_ep"] + 1):
+        opts = get_download_options(subject_id, detail_path, se=se, ep=ep_num)
+        if not opts["downloads"]:
+            continue
+        if resolution:
+            vid = next((d for d in opts["downloads"] if str(d["resolution"]) == resolution), opts["downloads"][0])
+        else:
+            vid = opts["downloads"][0]
+        vid["headers"] = cdn_headers
+        episodes.append({
+            "ep":       ep_num,
+            "video":    vid,
+            "captions": [{**c, "headers": cdn_headers} for c in opts["captions"]],
+        })
+
+    return jsonify({"season": se, "episodes": episodes})
+
+
 # ── Single episode stream (fetches fresh URL + proxies server-side) ──────────
 
 @app.get("/stream")
